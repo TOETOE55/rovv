@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "rou",
+    "rou_derive",
+    "rou_test",
+]
