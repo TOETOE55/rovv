@@ -43,6 +43,17 @@ mod tests {
 
     #[test]
     fn test_row() {
+        fn with_field_a(t: &row! { a: String, .. }) -> &str {
+            t.view_ref(optics!(a))
+        }
+
+        fn to_field_a() -> row! { a: String, .. } {
+            Bar {
+                a: "this is Bar".to_string(),
+                c: 0,
+            }
+        }
+
         let foo = Foo {
             a: "this is Foo".to_string(),
             b: (),
