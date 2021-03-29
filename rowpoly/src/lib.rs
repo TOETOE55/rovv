@@ -1,4 +1,8 @@
-pub use rowpoly_derive::row;
+pub use rowpoly_derive::{dyn_row, row};
 
-pub trait Empty { }
+pub trait Empty {}
 impl<T> Empty for T {}
+
+use lens_rs;
+
+include!(concat!(env!("OUT_DIR"), "/dyn_row.rs"));

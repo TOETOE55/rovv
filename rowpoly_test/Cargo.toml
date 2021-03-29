@@ -12,3 +12,4 @@ lens-rs = "0.2"
 
 [package.metadata.inwelling]
 lens-rs = true
+rowpoly = true
