@@ -1,4 +1,4 @@
-pub use rowpoly_derive::{dyn_row, row};
+pub use rovv_derive::{dyn_row, row};
 
 pub trait Empty {}
 impl<T> Empty for T {}

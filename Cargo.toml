@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "rowpoly",
-    "rowpoly_derive",
-    "rowpoly_test",
+    "rovv",
+    "rovv_derive",
+    "rovv_test",
 ]

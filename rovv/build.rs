@@ -11,7 +11,7 @@ fn main() {
     .sections
     .into_iter()
     .fold(
-        String::from("rowpoly_derive::scan_dyn_row_from_source_files!{\n"),
+        String::from("rovv_derive::scan_dyn_row_from_source_files!{\n"),
         |mut output, section| {
             section.rs_paths.unwrap().iter().for_each(|rs_path| {
                 let rs_path = rs_path.to_str().unwrap();

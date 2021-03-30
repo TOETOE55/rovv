@@ -192,7 +192,7 @@ pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 }
             }
         })
-        .chain(Some(quote! { rowpoly::Empty }))
+        .chain(Some(quote! { rovv::Empty }))
         .chain(
             row_type
                 .lifetime_bounds
@@ -225,7 +225,7 @@ pub fn dyn_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         .collect::<Vec<_>>();
 
     proc_macro::TokenStream::from(quote! {
-        dyn rowpoly::#dyn_row_ident<#(#fields_ty),*> #(+ #lifetime_bounds)*
+        dyn rovv::#dyn_row_ident<#(#fields_ty),*> #(+ #lifetime_bounds)*
     })
 }
 
