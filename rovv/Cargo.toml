@@ -15,5 +15,5 @@ description = "provide the anonymous row type (poor-man's row polymorphism) in r
 inwelling = "0.3"
 
 [dependencies]
-rovv_derive = { path = "../rovv_derive" }
+rovv_derive = "0.1"
 lens-rs = "0.2"
