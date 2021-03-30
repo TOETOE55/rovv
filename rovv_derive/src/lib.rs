@@ -153,6 +153,17 @@ impl Parse for RowType {
     }
 }
 
+/// transform
+///
+/// ```rust
+/// row! { <'a> ref a: A, mut b: B, c: C, .. }
+/// ```
+///
+/// to
+///
+/// ```rust
+/// impl LensRef<Optic![a], Image = A> + LensMut<Optic![b], Image = B> + Lens<Optic![c], Image = C> + 'a
+/// ```
 #[proc_macro]
 pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let row_type = parse_macro_input!(input as RowType);
@@ -211,6 +222,17 @@ pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     proc_macro::TokenStream::from(impl_ty)
 }
 
+/// transform
+///
+/// ```rust
+/// dyn_row! { <'a> ref a: A, mut b: B, c: C, .. }
+/// ```
+///
+/// to
+///
+/// ```rust
+/// dyn LensRef<Optic![a], Image = A> + LensMut<Optic![b], Image = B> + Lens<Optic![c], Image = C> + 'a
+/// ```
 #[proc_macro]
 pub fn dyn_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let row_type = parse_macro_input!(input as RowType);
