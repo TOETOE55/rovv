@@ -7,9 +7,9 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+lens-rs = "0.3"
 rovv = { path = "../rovv" }
-lens-rs = "0.2"
 
 [package.metadata.inwelling]
-lens-rs = true
+lens-rs_generator = true
 rovv = true

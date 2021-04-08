@@ -1,12 +1,12 @@
 use proc_macro2::Span;
 use quote::*;
-use std::collections::HashMap;
-use std::fs;
-use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
-use syn::visit::Visit;
-use syn::Token;
-use syn::{parse_macro_input, parse_quote};
+use syn::{
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    Token,
+    parse_macro_input
+};
+
 
 #[derive(Clone, Debug)]
 enum Mutability {
@@ -22,30 +22,34 @@ enum TypeSuffix {
     Question(Token![?]),
 }
 
-/// ref a: A?, mut b: B*, c: C
+#[derive(Clone, Debug)]
+enum Key {
+    Ident(syn::Ident),
+    Type {
+        _bracket_token: syn::token::Bracket,
+        key_type: syn::Type,
+    }
+}
+
+/// ref a: A?, mut b: B*, c: C, [K]: V
 #[derive(Clone, Debug)]
 struct RowTypeField {
     mutability: Mutability,
-    field_name: syn::Ident,
+    key: Key,
     _colon_token: Token![:],
     field_type: syn::Type,
     suffix: TypeSuffix,
 }
 
-#[derive(Clone, Debug)]
-struct LifetimeBounds {
-    _lt_token: Token![<],
-    lifetimes: Punctuated<syn::Lifetime, Token![,]>,
-    _gt_token: Token![>],
-}
 
-/// row! { <'a> a: A, b: B, c: C, ..T }
+
+/// row! { a: A, b: B, c: C, .. : Trait1 + Trait2 + 'a }
 #[derive(Clone, Debug)]
 struct RowType {
-    lifetime_bounds: Option<LifetimeBounds>,
     fields: Punctuated<RowTypeField, Token![,]>,
     _dot2token: Token![..],
-    mixin: Option<syn::Type>,
+    _colon_token: Option<Token![:]>,
+    bounds: Punctuated<syn::TypeParamBound, Token![+]>,
 }
 
 impl Parse for Mutability {
@@ -55,7 +59,7 @@ impl Parse for Mutability {
             Ok(Mutability::Ref(input.parse()?))
         } else if lookahead.peek(Token![mut]) {
             Ok(Mutability::Mut(input.parse()?))
-        } else if lookahead.peek(syn::Ident) {
+        } else if lookahead.peek(syn::Ident) || lookahead.peek(syn::token::Bracket) {
             Ok(Mutability::Move)
         } else {
             Err(syn::Error::new(
@@ -79,11 +83,35 @@ impl Parse for TypeSuffix {
     }
 }
 
+impl Parse for Key {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(syn::token::Bracket) {
+            let content;
+            let _bracket_token = syn::bracketed!(content in input);
+            Ok(Self::Type {
+                _bracket_token,
+                key_type: content.parse()?
+            })
+        } else {
+            Ok(Self::Ident(input.parse()?))
+        }
+    }
+}
+
+impl ToTokens for Key {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self {
+            Key::Ident(id) => tokens.extend(quote! { lens_rs::Optics![#id] }),
+            Key::Type { key_type, .. } => key_type.to_tokens(tokens),
+        }
+    }
+}
+
 impl Parse for RowTypeField {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
             mutability: input.parse()?,
-            field_name: input.parse()?,
+            key: input.parse()?,
             _colon_token: input.parse()?,
             field_type: input.parse()?,
             suffix: input.parse()?,
@@ -91,32 +119,9 @@ impl Parse for RowTypeField {
     }
 }
 
-impl Parse for LifetimeBounds {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let _lt_token = input.parse()?;
-        if input.peek(Token![>]) {
-            return Ok(Self {
-                _lt_token,
-                lifetimes: Default::default(),
-                _gt_token: input.parse()?,
-            });
-        }
-
-        Ok(Self {
-            _lt_token,
-            lifetimes: Punctuated::parse_separated_nonempty(input)?,
-            _gt_token: input.parse()?,
-        })
-    }
-}
 
 impl Parse for RowType {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let lifetime_bounds = if input.peek(Token![<]) {
-            Some(input.parse()?)
-        } else {
-            None
-        };
 
         let mut fields = Punctuated::new();
         while !input.is_empty() && !input.peek(Token![..]) {
@@ -138,17 +143,22 @@ impl Parse for RowType {
             ));
         };
 
-        let mixin = if input.peek(syn::token::Type) {
+        let _colon_token = if input.peek(Token![:]) {
             Some(input.parse()?)
         } else {
-            None
+            return Ok(Self {
+                fields,
+                _dot2token,
+                _colon_token: None,
+                bounds: Default::default()
+            })
         };
 
         Ok(Self {
-            lifetime_bounds,
             fields,
             _dot2token,
-            mixin,
+            _colon_token,
+            bounds: Punctuated::parse_terminated(&input)?
         })
     }
 }
@@ -156,13 +166,13 @@ impl Parse for RowType {
 /// transform
 ///
 /// ```rust
-/// row! { <'a> ref a: A, mut b: B, c: C, .. }
+/// row! { ref a: A, mut b: B, c: C, .. : Trait1 + Trait2 + 'a }
 /// ```
 ///
 /// to
 ///
 /// ```rust
-/// impl LensRef<Optic![a], Image = A> + LensMut<Optic![b], Image = B> + Lens<Optic![c], Image = C> + 'a
+/// impl LensRef<Optic![a], A> + LensMut<Optic![b], B> + Lens<Optic![c], C> + Trait1 + Trait2 + 'a
 /// ```
 #[proc_macro]
 pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
@@ -171,246 +181,127 @@ pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         .fields
         .into_iter()
         .map(|x: RowTypeField| {
-            let field_name = x.field_name;
+            let key = x.key;
             let field_type = x.field_type;
             match (x.suffix, x.mutability) {
                 (TypeSuffix::Empty, Mutability::Ref(_)) => {
-                    quote! { lens_rs:: LensRef<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: LensRef<#key, #field_type> }
                 }
                 (TypeSuffix::Empty, Mutability::Mut(_)) => {
-                    quote! { lens_rs:: LensMut<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: LensMut<#key, #field_type> }
                 }
                 (TypeSuffix::Empty, Mutability::Move) => {
-                    quote! { lens_rs:: Lens<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: Lens<#key, #field_type> }
                 }
                 (TypeSuffix::Star(_), Mutability::Ref(_)) => {
-                    quote! { lens_rs:: TraversalRef<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: TraversalRef<#key, #field_type> }
                 }
                 (TypeSuffix::Star(_), Mutability::Mut(_)) => {
-                    quote! { lens_rs:: TraversalMut<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: TraversalMut<#key, #field_type> }
                 }
                 (TypeSuffix::Star(_), Mutability::Move) => {
-                    quote! { lens_rs:: Traversal<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: Traversal<#key, #field_type> }
                 }
                 (TypeSuffix::Question(_), Mutability::Ref(_)) => {
-                    quote! { lens_rs:: PrismRef<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: PrismRef<#key, #field_type> }
                 }
                 (TypeSuffix::Question(_), Mutability::Mut(_)) => {
-                    quote! { lens_rs:: PrismMut<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: PrismMut<#key, #field_type> }
                 }
                 (TypeSuffix::Question(_), Mutability::Move) => {
-                    quote! { lens_rs:: Prism<Optics![#field_name], Image = #field_type> }
+                    quote! { lens_rs:: Prism<#key, #field_type> }
                 }
             }
         })
         .chain(Some(quote! { rovv::Empty }))
-        .chain(
-            row_type
-                .lifetime_bounds
-                .into_iter()
-                .flat_map(|bound| bound.lifetimes)
-                .map(|lifetime| quote! { #lifetime }),
+        .chain(row_type
+                   .bounds
+                   .into_iter()
+                   .map(|bound: syn::TypeParamBound| quote! { #bound }),
         )
         .collect::<Punctuated<proc_macro2::TokenStream, Token![+]>>();
 
-    let impl_ty = row_type
-        .mixin
-        .map(|ty| quote! { impl #bound + std::ops::Deref<Output = #ty> + std::ops::DerefMut<Output = #ty> })
-        .unwrap_or_else(|| quote! { impl #bound });
-
     // println!("{}", impl_ty.to_string());
-    proc_macro::TokenStream::from(impl_ty)
+    proc_macro::TokenStream::from(quote! { impl #bound })
 }
 
 /// transform
 ///
 /// ```rust
-/// dyn_row! { <'a> ref a: A, mut b: B, c: C, .. }
+/// dyn_row! { ref a: A, mut b: B, c: C, .. : Trait1 + Trait2 + 'a }
 /// ```
 ///
 /// to
 ///
 /// ```rust
-/// dyn LensRef<Optic![a], Image = A> + LensMut<Optic![b], Image = B> + Lens<Optic![c], Image = C> + 'a
+/// dyn LensRef<Optic![a],  A> + LensMut<Optic![b], B> + Lens<Optic![c], C> + Trait1 + Trait2 + 'a
 /// ```
 #[proc_macro]
 pub fn dyn_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let row_type = parse_macro_input!(input as RowType);
     let fields: Vec<RowTypeField> = row_type.fields.into_iter().collect::<Vec<_>>();
-    let (dyn_row_name, _, fields_ty, _) = join_dyn_row_field(fields);
+    let (dyn_row_name, key, fields_ty, _) = join_dyn_row_field(fields);
     let dyn_row_ident = syn::Ident::new(&dyn_row_name, Span::call_site());
-    let lifetime_bounds = row_type
-        .lifetime_bounds
-        .map(|bounds| bounds.lifetimes)
-        .unwrap_or_else(|| Punctuated::new())
+    let bounds = row_type
+        .bounds
         .into_iter()
         .collect::<Vec<_>>();
 
     proc_macro::TokenStream::from(quote! {
-        dyn rovv::#dyn_row_ident<#(#fields_ty),*> #(+ #lifetime_bounds)*
+        dyn rovv::#dyn_row_ident<#(#key, #fields_ty),*> #(+ #bounds)*
     })
 }
 
 fn join_dyn_row_field(
     mut fields: Vec<RowTypeField>,
-) -> (String, Vec<syn::Ident>, Vec<syn::Type>, Vec<syn::Ident>) {
-    fields.sort_by_key(|field| field.field_name.clone());
+) -> (String, Vec<Key>, Vec<syn::Type>, Vec<syn::Ident>) {
+    fields.sort_by_key(|field| map_trait(&field.suffix, &field.mutability));
 
     let mut dyn_row_name = "_dyn_row".to_string();
-    let mut fields_name = Vec::new();
+    let mut fields_key = Vec::new();
     let mut fields_ty = Vec::new();
     let mut optics_trait = Vec::new();
     for field in fields {
-        let field_name = field.field_name;
-        let optic_bound = match (field.suffix, field.mutability) {
-            (TypeSuffix::Empty, Mutability::Ref(_)) => {
-                dyn_row_name += &format!("_LensRef_{}", field_name.to_string());
-                syn::Ident::new("LensRef", Span::call_site())
-            }
-            (TypeSuffix::Empty, Mutability::Mut(_)) => {
-                dyn_row_name += &format!("_LensMut_{}", field_name.to_string());
-                syn::Ident::new("LensMut", Span::call_site())
-            }
-            (TypeSuffix::Empty, Mutability::Move) => {
-                dyn_row_name += &format!("_Lens_{}", field_name.to_string());
-                syn::Ident::new("Lens", Span::call_site())
-            }
-            (TypeSuffix::Star(_), Mutability::Ref(_)) => {
-                dyn_row_name += &format!("_TraversalRef_{}", field_name.to_string());
-                syn::Ident::new("TraversalRef", Span::call_site())
-            }
-            (TypeSuffix::Star(_), Mutability::Mut(_)) => {
-                dyn_row_name += &format!("_TraversalMut_{}", field_name.to_string());
-                syn::Ident::new("TraversalMut", Span::call_site())
-            }
-            (TypeSuffix::Star(_), Mutability::Move) => {
-                dyn_row_name += &format!("_Traversal_{}", field_name.to_string());
-                syn::Ident::new("Traversal", Span::call_site())
-            }
-            (TypeSuffix::Question(_), Mutability::Ref(_)) => {
-                dyn_row_name += &format!("_PrismRef_{}", field_name.to_string());
-                syn::Ident::new("PrismRef", Span::call_site())
-            }
-            (TypeSuffix::Question(_), Mutability::Mut(_)) => {
-                dyn_row_name += &format!("_PrismMut_{}", field_name.to_string());
-                syn::Ident::new("PrismMut", Span::call_site())
-            }
-            (TypeSuffix::Question(_), Mutability::Move) => {
-                dyn_row_name += &format!("_Prism_{}", field_name.to_string());
-                syn::Ident::new("Prism", Span::call_site())
-            }
-        };
+        let trait_name = map_trait(&field.suffix, &field.mutability);
+        dyn_row_name += &format!("_{}_", trait_name);
+        optics_trait.push(syn::Ident::new(trait_name, Span::call_site()));
         fields_ty.push(field.field_type);
-        fields_name.push(field_name);
-        optics_trait.push(optic_bound);
+        fields_key.push(field.key);
     }
 
-    (dyn_row_name, fields_name, fields_ty, optics_trait)
+    (dyn_row_name, fields_key, fields_ty, optics_trait)
 }
 
-type RowMap = HashMap<String, (Vec<syn::Ident>, Vec<syn::Ident>)>;
-
-struct DynRowCollector<'a>(&'a mut RowMap);
-
-impl<'a> DynRowCollector<'a> {
-    fn parse_dyn_row(&mut self, input: proc_macro::TokenStream) {
-        let row_type = syn::parse::<RowType>(input).expect("dyn_row invalid");
-        let fields: Vec<RowTypeField> = row_type.fields.into_iter().collect::<Vec<_>>();
-        let (dyn_row_ident, fields_name, _, optics_trait) = join_dyn_row_field(fields);
-        self.0
-            .entry(dyn_row_ident)
-            .or_insert((fields_name, optics_trait));
-    }
-}
-
-impl<'a> Visit<'_> for DynRowCollector<'a> {
-    fn visit_macro(&mut self, mac: &syn::Macro) {
-        syn::visit::visit_macro(self, mac);
-
-        if mac.path.leading_colon.is_none() && mac.path.segments.len() == 1 {
-            let seg = mac.path.segments.first().unwrap();
-            if seg.arguments == syn::PathArguments::None && seg.ident == "dyn_row" {
-                self.parse_dyn_row(mac.tokens.clone().into());
-            }
+fn map_trait(suffix: &TypeSuffix, mutability: &Mutability) -> &'static str {
+    match (suffix, mutability) {
+        (TypeSuffix::Empty, Mutability::Ref(_)) => {
+            "LensRef"
+        }
+        (TypeSuffix::Empty, Mutability::Mut(_)) => {
+            "LensMut"
+        }
+        (TypeSuffix::Empty, Mutability::Move) => {
+            "Lens"
+        }
+        (TypeSuffix::Star(_), Mutability::Ref(_)) => {
+            "TraversalRef"
+        }
+        (TypeSuffix::Star(_), Mutability::Mut(_)) => {
+            "TraversalMut"
+        }
+        (TypeSuffix::Star(_), Mutability::Move) => {
+            "Traversal"
+        }
+        (TypeSuffix::Question(_), Mutability::Ref(_)) => {
+            "PrismRef"
+        }
+        (TypeSuffix::Question(_), Mutability::Mut(_)) => {
+            "PrismMut"
+        }
+        (TypeSuffix::Question(_), Mutability::Move) => {
+            "Prism"
         }
     }
 }
 
-#[doc(hidden)]
-#[proc_macro]
-pub fn scan_dyn_row_from_source_files(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let mut iter = input.into_iter();
-    let mut row_map = RowMap::new();
 
-    loop {
-        let token_tree = iter.next();
-        match token_tree {
-            Some(proc_macro::TokenTree::Literal(literal)) => {
-                let file_name = literal.to_string();
-                let file_name = file_name.trim_matches('"');
-                let contents =
-                    String::from_utf8(fs::read(std::path::Path::new(file_name)).unwrap()).unwrap();
-                let syntax = syn::parse_file(&contents)
-                    .expect(".rs files should contain valid Rust source code.");
-                DynRowCollector(&mut row_map).visit_file(&syntax);
-
-                if let Some(token_tree) = iter.next() {
-                    if let proc_macro::TokenTree::Punct(punct) = token_tree {
-                        if punct.to_string() != "," {
-                            panic!(
-                                "scan_dyn_row_from_source_files!(): expect `,`, got `{}`",
-                                punct.to_string()
-                            );
-                        }
-                    }
-                } else {
-                    break;
-                }
-            }
-            None => break,
-            _ => panic!(
-                "scan_dyn_row_from_source_files!(): expect string literal, got `{:?}`",
-                token_tree
-            ),
-        }
-    }
-
-    let mut trait_items = Vec::<syn::ItemTrait>::with_capacity(row_map.len());
-    let mut impl_items = Vec::<syn::ItemImpl>::with_capacity(row_map.len());
-    for (dyn_row_name, (fields_name, optics_trait)) in row_map {
-        let generics = (0..fields_name.len())
-            .map(|n| format_ident!("T{}", n))
-            .collect::<Punctuated<_, Token![,]>>();
-        let bounds = generics
-            .iter()
-            .zip(fields_name)
-            .zip(optics_trait)
-            .map(|((gen, name), optic)| (gen, name, optic))
-            .map(|(gen, name, optic)| {
-                quote! {
-                    lens_rs::#optic<lens_rs::Optics![#name], Image = #gen>
-                }
-            })
-            .collect::<Punctuated<_, Token![+]>>();
-        let dyn_row_ident = syn::Ident::new(&dyn_row_name, Span::call_site());
-
-        trait_items.push(parse_quote! {
-            pub trait #dyn_row_ident<#generics>: #bounds {}
-        });
-
-        impl_items.push(parse_quote! {
-
-            impl<T, #generics> #dyn_row_ident<#generics> for T
-            where
-                T: #bounds
-            {}
-
-        });
-    }
-
-    quote!(
-        #(#trait_items)*
-        #(#impl_items)*
-    )
-    .into()
-}

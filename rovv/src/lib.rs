@@ -1,4 +1,6 @@
 
+
+
 /// ## Example
 ///
 /// A row with field `a: String`
@@ -52,8 +54,8 @@
 /// A row bound by lifetimes `'a`
 ///
 /// ```rust
-/// row! { <'a> ref a: A, mut b: B, .. }
-/// dyn_row! { <'a> ref a: A, mut b: B, .. }
+/// row! { ref a: A, mut b: B, .. : 'a }
+/// dyn_row! { ref a: A, mut b: B, .. : 'a }
 /// ```
 ///
 /// In fact,
@@ -62,9 +64,9 @@
 /// * `dyn_row! { <'a> ref a: A, mut b: B, c: C, .. }` is `dyn LensRef<Optic![a], Image = A> + LensMut<Optic![b], Image = B> + Lens<Optic![c], Image = C> + 'a`
 pub use rovv_derive::{dyn_row, row};
 
+#[doc(hidden)]
 pub trait Empty {}
-impl<T> Empty for T {}
+impl<T: ?Sized> Empty for T {}
 
-use lens_rs;
 
 include!(concat!(env!("OUT_DIR"), "/dyn_row.rs"));

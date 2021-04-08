@@ -1,9 +1,11 @@
 #[cfg(test)]
 mod tests {
     use lens_rs::*;
+    // use structx::*;
     use rovv::*;
-    // derive struct
-    #[derive(Copy, Clone, Debug, Optic, Lens)]
+    use std::ops::Deref;
+
+    #[derive(Copy, Clone, Debug, Lens)]
     struct Foo<A, B> {
         #[optic]
         a: A,
@@ -11,7 +13,7 @@ mod tests {
         b: B,
     }
 
-    #[derive(Clone, Debug, Optic, Lens)]
+    #[derive(Clone, Debug, Lens)]
     struct Bar {
         #[optic]
         a: String,
@@ -19,47 +21,47 @@ mod tests {
         c: i32,
     }
 
-
-
     fn with_field_a(t: row! { a: String, .. }) -> String {
         t.view(optics!(a))
     }
 
-    fn with_field_ref_a(t: &row! { ref a: String, .. }) -> &str {
+    fn with_field_ref_a(t: &row! { ref a: String, .. : ?Sized }) -> &str {
         t.view_ref(optics!(a))
     }
 
-    fn with_field_mut_a(t: &mut row! { mut a: String, .. }) {
+    fn _with_field_mut_a(t: &mut row! { mut a: String, .. }) {
         *t.view_mut(optics!(a)) += "suffix";
+    }
+
+    fn dyn_with_field_ref_a(r: &dyn_row! { a: String, .. }) -> &str {
+        r.view_ref(optics!(a))
     }
 
     fn to_field_a() -> row! { a: String, .. } {
         Bar {
             a: "this is Bar".to_string(),
-            c: 0,
+            c: 1,
         }
     }
 
-    fn dyn_with_field_ref_a(r: &dyn_row! { ref a: String, .. }) -> &str {
-        r.view_ref(optics!(a))
-    }
-
     fn to_dyn_field_a() -> Box<dyn_row! { a: String, .. }> {
-        Box::new(Bar {
-            a: "this is Bar".to_string(),
-            c: 0,
+        Box::new(Foo {
+            a: "this is Foo".to_string(),
+            b: Some(0),
         })
     }
 
-    fn with_many_string(t: &row! { _mapped: String*, .. }) -> Vec<&str> {
-        t.traverse_ref(optics!(_mapped))
-            .into_iter()
-            .map(|s| s.as_ref())
-            .collect()
+    fn may_with_field_c(t: &row! { c: i32?, .. }) -> Option<i32> {
+        Some(*t.preview_ref(optics!(c))?)
     }
 
-    fn may_with_field_some(t: &row! { Some: String?, .. }) -> Option<&str> {
-        t.preview_ref(optics!(Some)).map(|s| s.as_ref())
+    fn row_with_bound(r: &row! { a: String, .. : Clone }) -> row! { a: String, .. : Clone } {
+        r.clone()
+    }
+
+    // function foo<Type>(key: keyof Type, r: { [K in keyof Type]: number }): number
+    fn row_keyof<K, V, Type: Lens<K, V>>(_: &Type, key: K, r: &row! { [K]: i32, .. }) -> i32 {
+        *r.view_ref(key)
     }
 
     #[test]
@@ -73,23 +75,21 @@ mod tests {
             c: 0,
         };
 
-        assert_eq!(with_field_a(foo.clone()).as_str(), "this is Foo");
-        assert_eq!(with_field_a(bar.clone()).as_str(), "this is Bar");
+        assert_eq!(&*with_field_a(foo.clone()), "this is Foo");
+        assert_eq!(&*with_field_a(bar.clone()), "this is Bar");
 
-        assert_eq!(dyn_with_field_ref_a(&foo), "this is Foo");
-        // assert_eq!(test_dyn(&bar), "this is Bar");
+        assert_eq!(with_field_ref_a(&foo), "this is Foo");
+        assert_eq!(with_field_ref_a(&bar), "this is Bar");
 
-        assert_eq!(to_field_a().view_ref(optics!(a)), "this is Bar");
+        assert_eq!(may_with_field_c(&bar), Some(0));
+        assert_eq!(may_with_field_c(&foo), None);
 
-        assert_eq!(
-            may_with_field_some(&Some("this is Some".to_string())),
-            Some("this is Some")
-        );
-        assert_eq!(may_with_field_some(&Option::<String>::None), None);
+        assert_eq!(*row_with_bound(&foo).view_ref(optics!(a)), "this is Foo");
 
-        assert_eq!(
-            with_many_string(&vec!["this is vec".to_string()]),
-            vec!["this is vec"]
-        );
+        assert_eq!(&*with_field_a(to_field_a()), "this is Bar");
+        assert_eq!(with_field_ref_a(to_dyn_field_a().deref()), "this is Foo");
+        assert_eq!(dyn_with_field_ref_a(to_dyn_field_a().deref()), "this is Foo");
+
+        assert_eq!(row_keyof(&foo, optics!(a), &Foo { a: 1, b: () }), 1);
     }
 }
