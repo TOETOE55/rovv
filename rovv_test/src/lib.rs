@@ -59,9 +59,21 @@ mod tests {
         r.clone()
     }
 
-    // function foo<Type>(key: keyof Type, r: { [K in keyof Type]: number }): number
-    fn row_keyof<K, V, Type: Lens<K, V>>(_: &Type, key: K, r: &row! { [K]: i32, .. }) -> i32 {
+    // function foo(key: keyof Bar, r: { [K in keyof Bar]: number }): number
+    fn row_keyof<K, V>(key: K, r: &row! { [K]: i32, .. }) -> i32
+    where
+        Bar: Lens<K, V>,
+    {
         *r.view_ref(key)
+    }
+
+    fn sum_field(n: i32) -> Box<dyn_row! { Ok: i32?, Err: String?, Some: ()? , ..}> {
+        match n % 3 {
+            0 => Box::new(Result::<_, String>::Ok(0)),
+            1 => Box::new(Result::<i32, _>::Err(String::from("no!"))),
+            2 => Box::new(Some(())),
+            _ => Box::new(Option::<()>::None),
+        }
     }
 
     #[test]
@@ -88,8 +100,11 @@ mod tests {
 
         assert_eq!(&*with_field_a(to_field_a()), "this is Bar");
         assert_eq!(with_field_ref_a(to_dyn_field_a().deref()), "this is Foo");
-        assert_eq!(dyn_with_field_ref_a(to_dyn_field_a().deref()), "this is Foo");
+        assert_eq!(
+            dyn_with_field_ref_a(to_dyn_field_a().deref()),
+            "this is Foo"
+        );
 
-        assert_eq!(row_keyof(&foo, optics!(a), &Foo { a: 1, b: () }), 1);
+        assert_eq!(row_keyof(optics!(a), &Foo { a: 1, b: () }), 1);
     }
 }

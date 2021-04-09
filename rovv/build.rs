@@ -1,18 +1,15 @@
 use inwelling::*;
 
-use std::{env, path::PathBuf, fs};
-use std::collections::HashMap;
-use quote::*;
-use syn::{
-    visit::Visit,
-    parse::{
-        Parse,
-        ParseStream
-    },
-    Token,
-    punctuated::Punctuated,
-};
 use proc_macro2::Span;
+use quote::*;
+use std::collections::HashMap;
+use std::{env, fs, path::PathBuf};
+use syn::{
+    parse::{Parse, ParseStream},
+    punctuated::Punctuated,
+    visit::Visit,
+    Token,
+};
 
 fn main() {
     let mut row_map = RowMap::new();
@@ -23,7 +20,7 @@ fn main() {
         watch_rs_files: true,
         dump_rs_paths: true,
     })
-        .sections
+    .sections
     {
         for rs_path in section.rs_paths.unwrap() {
             let contents = String::from_utf8(fs::read(rs_path).unwrap()).unwrap();
@@ -49,14 +46,16 @@ fn main() {
         output += &quote! {
             #[allow(non_camel_case_types)]
             pub trait #dyn_row_ident<#generics>: #bounds { }
-        }.to_string();
+        }
+        .to_string();
         output += &"\n";
         output += &quote! {
             impl<T: ?Sized, #generics> #dyn_row_ident<#generics> for T
             where
                 T: #bounds,
             { }
-        }.to_string();
+        }
+        .to_string();
         output += &"\n";
     }
 
@@ -84,7 +83,7 @@ enum Key {
     Type {
         _bracket_token: syn::token::Bracket,
         key_type: syn::Type,
-    }
+    },
 }
 
 /// ref a: A?, mut b: B*, c: C, [K]: V
@@ -96,8 +95,6 @@ struct RowTypeField {
     field_type: syn::Type,
     suffix: TypeSuffix,
 }
-
-
 
 /// row! { a: A, b: B, c: C, .. : Trait1 + Trait2 + 'a }
 #[derive(Clone, Debug)]
@@ -115,7 +112,7 @@ impl Parse for Mutability {
             Ok(Mutability::Ref(input.parse()?))
         } else if lookahead.peek(Token![mut]) {
             Ok(Mutability::Mut(input.parse()?))
-        } else if lookahead.peek(syn::Ident) || lookahead.peek(syn::token::Bracket)  {
+        } else if lookahead.peek(syn::Ident) || lookahead.peek(syn::token::Bracket) {
             Ok(Mutability::Move)
         } else {
             Err(syn::Error::new(
@@ -146,7 +143,7 @@ impl Parse for Key {
             let _bracket_token = syn::bracketed!(content in input);
             Ok(Self::Type {
                 _bracket_token,
-                key_type: content.parse()?
+                key_type: content.parse()?,
             })
         } else {
             Ok(Self::Ident(input.parse()?))
@@ -175,10 +172,8 @@ impl Parse for RowTypeField {
     }
 }
 
-
 impl Parse for RowType {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-
         let mut fields = Punctuated::new();
         while !input.is_empty() && !input.peek(Token![..]) {
             let row_field = input.call(RowTypeField::parse)?;
@@ -206,15 +201,15 @@ impl Parse for RowType {
                 fields,
                 _dot2token,
                 _colon_token: None,
-                bounds: Default::default()
-            })
+                bounds: Default::default(),
+            });
         };
 
         Ok(Self {
             fields,
             _dot2token,
             _colon_token,
-            bounds: Punctuated::parse_terminated(&input)?
+            bounds: Punctuated::parse_terminated(&input)?,
         })
     }
 }
@@ -239,36 +234,17 @@ fn join_dyn_row_field(
     (dyn_row_name, fields_key, fields_ty, optics_trait)
 }
 
-
 fn map_trait(suffix: &TypeSuffix, mutability: &Mutability) -> &'static str {
     match (suffix, mutability) {
-        (TypeSuffix::Empty, Mutability::Ref(_)) => {
-            "LensRef"
-        }
-        (TypeSuffix::Empty, Mutability::Mut(_)) => {
-            "LensMut"
-        }
-        (TypeSuffix::Empty, Mutability::Move) => {
-            "Lens"
-        }
-        (TypeSuffix::Star(_), Mutability::Ref(_)) => {
-            "TraversalRef"
-        }
-        (TypeSuffix::Star(_), Mutability::Mut(_)) => {
-            "TraversalMut"
-        }
-        (TypeSuffix::Star(_), Mutability::Move) => {
-            "Traversal"
-        }
-        (TypeSuffix::Question(_), Mutability::Ref(_)) => {
-            "PrismRef"
-        }
-        (TypeSuffix::Question(_), Mutability::Mut(_)) => {
-            "PrismMut"
-        }
-        (TypeSuffix::Question(_), Mutability::Move) => {
-            "Prism"
-        }
+        (TypeSuffix::Empty, Mutability::Ref(_)) => "LensRef",
+        (TypeSuffix::Empty, Mutability::Mut(_)) => "LensMut",
+        (TypeSuffix::Empty, Mutability::Move) => "Lens",
+        (TypeSuffix::Star(_), Mutability::Ref(_)) => "TraversalRef",
+        (TypeSuffix::Star(_), Mutability::Mut(_)) => "TraversalMut",
+        (TypeSuffix::Star(_), Mutability::Move) => "Traversal",
+        (TypeSuffix::Question(_), Mutability::Ref(_)) => "PrismRef",
+        (TypeSuffix::Question(_), Mutability::Mut(_)) => "PrismMut",
+        (TypeSuffix::Question(_), Mutability::Move) => "Prism",
     }
 }
 
@@ -281,9 +257,7 @@ impl<'a> DynRowCollector<'a> {
         let row_type = syn::parse2::<RowType>(input).expect("dyn_row invalid");
         let fields: Vec<RowTypeField> = row_type.fields.into_iter().collect::<Vec<_>>();
         let (dyn_row_ident, _, _, optics_trait) = join_dyn_row_field(fields);
-        self.0
-            .entry(dyn_row_ident)
-            .or_insert( optics_trait);
+        self.0.entry(dyn_row_ident).or_insert(optics_trait);
     }
 }
 

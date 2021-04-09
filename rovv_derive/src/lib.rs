@@ -2,11 +2,10 @@ use proc_macro2::Span;
 use quote::*;
 use syn::{
     parse::{Parse, ParseStream},
+    parse_macro_input,
     punctuated::Punctuated,
     Token,
-    parse_macro_input
 };
-
 
 #[derive(Clone, Debug)]
 enum Mutability {
@@ -28,7 +27,7 @@ enum Key {
     Type {
         _bracket_token: syn::token::Bracket,
         key_type: syn::Type,
-    }
+    },
 }
 
 /// ref a: A?, mut b: B*, c: C, [K]: V
@@ -40,8 +39,6 @@ struct RowTypeField {
     field_type: syn::Type,
     suffix: TypeSuffix,
 }
-
-
 
 /// row! { a: A, b: B, c: C, .. : Trait1 + Trait2 + 'a }
 #[derive(Clone, Debug)]
@@ -90,7 +87,7 @@ impl Parse for Key {
             let _bracket_token = syn::bracketed!(content in input);
             Ok(Self::Type {
                 _bracket_token,
-                key_type: content.parse()?
+                key_type: content.parse()?,
             })
         } else {
             Ok(Self::Ident(input.parse()?))
@@ -119,10 +116,8 @@ impl Parse for RowTypeField {
     }
 }
 
-
 impl Parse for RowType {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-
         let mut fields = Punctuated::new();
         while !input.is_empty() && !input.peek(Token![..]) {
             let row_field = input.call(RowTypeField::parse)?;
@@ -150,15 +145,15 @@ impl Parse for RowType {
                 fields,
                 _dot2token,
                 _colon_token: None,
-                bounds: Default::default()
-            })
+                bounds: Default::default(),
+            });
         };
 
         Ok(Self {
             fields,
             _dot2token,
             _colon_token,
-            bounds: Punctuated::parse_terminated(&input)?
+            bounds: Punctuated::parse_terminated(&input)?,
         })
     }
 }
@@ -214,10 +209,11 @@ pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         })
         .chain(Some(quote! { rovv::Empty }))
-        .chain(row_type
-                   .bounds
-                   .into_iter()
-                   .map(|bound: syn::TypeParamBound| quote! { #bound }),
+        .chain(
+            row_type
+                .bounds
+                .into_iter()
+                .map(|bound: syn::TypeParamBound| quote! { #bound }),
         )
         .collect::<Punctuated<proc_macro2::TokenStream, Token![+]>>();
 
@@ -242,10 +238,7 @@ pub fn dyn_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let fields: Vec<RowTypeField> = row_type.fields.into_iter().collect::<Vec<_>>();
     let (dyn_row_name, key, fields_ty, _) = join_dyn_row_field(fields);
     let dyn_row_ident = syn::Ident::new(&dyn_row_name, Span::call_site());
-    let bounds = row_type
-        .bounds
-        .into_iter()
-        .collect::<Vec<_>>();
+    let bounds = row_type.bounds.into_iter().collect::<Vec<_>>();
 
     proc_macro::TokenStream::from(quote! {
         dyn rovv::#dyn_row_ident<#(#key, #fields_ty),*> #(+ #bounds)*
@@ -274,34 +267,14 @@ fn join_dyn_row_field(
 
 fn map_trait(suffix: &TypeSuffix, mutability: &Mutability) -> &'static str {
     match (suffix, mutability) {
-        (TypeSuffix::Empty, Mutability::Ref(_)) => {
-            "LensRef"
-        }
-        (TypeSuffix::Empty, Mutability::Mut(_)) => {
-            "LensMut"
-        }
-        (TypeSuffix::Empty, Mutability::Move) => {
-            "Lens"
-        }
-        (TypeSuffix::Star(_), Mutability::Ref(_)) => {
-            "TraversalRef"
-        }
-        (TypeSuffix::Star(_), Mutability::Mut(_)) => {
-            "TraversalMut"
-        }
-        (TypeSuffix::Star(_), Mutability::Move) => {
-            "Traversal"
-        }
-        (TypeSuffix::Question(_), Mutability::Ref(_)) => {
-            "PrismRef"
-        }
-        (TypeSuffix::Question(_), Mutability::Mut(_)) => {
-            "PrismMut"
-        }
-        (TypeSuffix::Question(_), Mutability::Move) => {
-            "Prism"
-        }
+        (TypeSuffix::Empty, Mutability::Ref(_)) => "LensRef",
+        (TypeSuffix::Empty, Mutability::Mut(_)) => "LensMut",
+        (TypeSuffix::Empty, Mutability::Move) => "Lens",
+        (TypeSuffix::Star(_), Mutability::Ref(_)) => "TraversalRef",
+        (TypeSuffix::Star(_), Mutability::Mut(_)) => "TraversalMut",
+        (TypeSuffix::Star(_), Mutability::Move) => "Traversal",
+        (TypeSuffix::Question(_), Mutability::Ref(_)) => "PrismRef",
+        (TypeSuffix::Question(_), Mutability::Mut(_)) => "PrismMut",
+        (TypeSuffix::Question(_), Mutability::Move) => "Prism",
     }
 }
-
-
