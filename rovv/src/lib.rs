@@ -160,8 +160,5 @@ pub use rovv_derive::dyn_row;
 ///
 pub use rovv_derive::row;
 
-#[doc(hidden)]
-pub trait Empty {}
-impl<T: ?Sized> Empty for T {}
 
 include!(concat!(env!("OUT_DIR"), "/dyn_row.rs"));

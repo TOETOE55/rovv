@@ -31,7 +31,7 @@ fn main() {
     }
 
     let mut output = String::new();
-    for (dyn_row_name, lens_bounds) in row_map {
+    for (row_name, lens_bounds) in row_map {
         let generics = (0..lens_bounds.len())
             .flat_map(|n| vec![format_ident!("K{}", n), format_ident!("V{}", n)])
             .collect::<Punctuated<_, Token![,]>>();
@@ -41,16 +41,16 @@ fn main() {
             .map(|(n, bound)| (format_ident!("K{}", n), format_ident!("V{}", n), bound))
             .map(|(k, v, bound)| quote! { lens_rs::#bound<#k, #v> })
             .collect::<Punctuated<_, Token![+]>>();
-        let dyn_row_ident = syn::Ident::new(&dyn_row_name, Span::call_site());
+        let row_ident = syn::Ident::new(&row_name, Span::call_site());
 
         output += &quote! {
             #[allow(non_camel_case_types)]
-            pub trait #dyn_row_ident<#generics>: #bounds { }
+            pub trait #row_ident<#generics>: #bounds { }
         }
         .to_string();
         output += &"\n";
         output += &quote! {
-            impl<T: ?Sized, #generics> #dyn_row_ident<#generics> for T
+            impl<T: ?Sized, #generics> #row_ident<#generics> for T
             where
                 T: #bounds,
             { }
@@ -214,12 +214,12 @@ impl Parse for RowType {
     }
 }
 
-fn join_dyn_row_field(
+fn join_row_field(
     mut fields: Vec<RowTypeField>,
 ) -> (String, Vec<Key>, Vec<syn::Type>, Vec<syn::Ident>) {
     fields.sort_by_key(|field| map_trait(&field.suffix, &field.mutability));
 
-    let mut dyn_row_name = "_dyn_row".to_string();
+    let mut dyn_row_name = "_row".to_string();
     let mut fields_key = Vec::new();
     let mut fields_ty = Vec::new();
     let mut optics_trait = Vec::new();
@@ -253,11 +253,11 @@ type RowMap = HashMap<String, Vec<syn::Ident>>;
 struct DynRowCollector<'a>(&'a mut RowMap);
 
 impl<'a> DynRowCollector<'a> {
-    fn parse_dyn_row(&mut self, input: proc_macro2::TokenStream) {
-        let row_type = syn::parse2::<RowType>(input).expect("dyn_row invalid");
+    fn parse_row(&mut self, input: proc_macro2::TokenStream) {
+        let row_type = syn::parse2::<RowType>(input).expect("row invalid");
         let fields: Vec<RowTypeField> = row_type.fields.into_iter().collect::<Vec<_>>();
-        let (dyn_row_ident, _, _, optics_trait) = join_dyn_row_field(fields);
-        self.0.entry(dyn_row_ident).or_insert(optics_trait);
+        let (row_ident, _, _, optics_trait) = join_row_field(fields);
+        self.0.entry(row_ident).or_insert(optics_trait);
     }
 }
 
@@ -267,8 +267,8 @@ impl<'a> Visit<'_> for DynRowCollector<'a> {
 
         if mac.path.leading_colon.is_none() && mac.path.segments.len() == 1 {
             let seg = mac.path.segments.first().unwrap();
-            if seg.arguments == syn::PathArguments::None && seg.ident == "dyn_row" {
-                self.parse_dyn_row(mac.tokens.clone().into());
+            if seg.arguments == syn::PathArguments::None && (seg.ident == "dyn_row" || seg.ident == "row")  {
+                self.parse_row(mac.tokens.clone().into());
             }
         }
     }

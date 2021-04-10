@@ -172,53 +172,14 @@ impl Parse for RowType {
 #[proc_macro]
 pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let row_type = parse_macro_input!(input as RowType);
-    let bound = row_type
-        .fields
-        .into_iter()
-        .map(|x: RowTypeField| {
-            let key = x.key;
-            let field_type = x.field_type;
-            match (x.suffix, x.mutability) {
-                (TypeSuffix::Empty, Mutability::Ref(_)) => {
-                    quote! { lens_rs:: LensRef<#key, #field_type> }
-                }
-                (TypeSuffix::Empty, Mutability::Mut(_)) => {
-                    quote! { lens_rs:: LensMut<#key, #field_type> }
-                }
-                (TypeSuffix::Empty, Mutability::Move) => {
-                    quote! { lens_rs:: Lens<#key, #field_type> }
-                }
-                (TypeSuffix::Star(_), Mutability::Ref(_)) => {
-                    quote! { lens_rs:: TraversalRef<#key, #field_type> }
-                }
-                (TypeSuffix::Star(_), Mutability::Mut(_)) => {
-                    quote! { lens_rs:: TraversalMut<#key, #field_type> }
-                }
-                (TypeSuffix::Star(_), Mutability::Move) => {
-                    quote! { lens_rs:: Traversal<#key, #field_type> }
-                }
-                (TypeSuffix::Question(_), Mutability::Ref(_)) => {
-                    quote! { lens_rs:: PrismRef<#key, #field_type> }
-                }
-                (TypeSuffix::Question(_), Mutability::Mut(_)) => {
-                    quote! { lens_rs:: PrismMut<#key, #field_type> }
-                }
-                (TypeSuffix::Question(_), Mutability::Move) => {
-                    quote! { lens_rs:: Prism<#key, #field_type> }
-                }
-            }
-        })
-        .chain(Some(quote! { rovv::Empty }))
-        .chain(
-            row_type
-                .bounds
-                .into_iter()
-                .map(|bound: syn::TypeParamBound| quote! { #bound }),
-        )
-        .collect::<Punctuated<proc_macro2::TokenStream, Token![+]>>();
+    let fields: Vec<RowTypeField> = row_type.fields.into_iter().collect::<Vec<_>>();
+    let (row_name, key, fields_ty, _) = join_row_field(fields);
+    let row_ident = syn::Ident::new(&row_name, Span::call_site());
+    let bounds = row_type.bounds.into_iter().collect::<Vec<_>>();
 
-    // println!("{}", impl_ty.to_string());
-    proc_macro::TokenStream::from(quote! { impl #bound })
+    proc_macro::TokenStream::from(quote! {
+        impl rovv::#row_ident<#(#key, #fields_ty),*> #(+ #bounds)*
+    })
 }
 
 /// transform
@@ -236,33 +197,33 @@ pub fn row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub fn dyn_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let row_type = parse_macro_input!(input as RowType);
     let fields: Vec<RowTypeField> = row_type.fields.into_iter().collect::<Vec<_>>();
-    let (dyn_row_name, key, fields_ty, _) = join_dyn_row_field(fields);
-    let dyn_row_ident = syn::Ident::new(&dyn_row_name, Span::call_site());
+    let (row_name, key, fields_ty, _) = join_row_field(fields);
+    let row_ident = syn::Ident::new(&row_name, Span::call_site());
     let bounds = row_type.bounds.into_iter().collect::<Vec<_>>();
 
     proc_macro::TokenStream::from(quote! {
-        dyn rovv::#dyn_row_ident<#(#key, #fields_ty),*> #(+ #bounds)*
+        dyn rovv::#row_ident<#(#key, #fields_ty),*> #(+ #bounds)*
     })
 }
 
-fn join_dyn_row_field(
+fn join_row_field(
     mut fields: Vec<RowTypeField>,
 ) -> (String, Vec<Key>, Vec<syn::Type>, Vec<syn::Ident>) {
     fields.sort_by_key(|field| map_trait(&field.suffix, &field.mutability));
 
-    let mut dyn_row_name = "_dyn_row".to_string();
+    let mut row_name = "_row".to_string();
     let mut fields_key = Vec::new();
     let mut fields_ty = Vec::new();
     let mut optics_trait = Vec::new();
     for field in fields {
         let trait_name = map_trait(&field.suffix, &field.mutability);
-        dyn_row_name += &format!("_{}_", trait_name);
+        row_name += &format!("_{}_", trait_name);
         optics_trait.push(syn::Ident::new(trait_name, Span::call_site()));
         fields_ty.push(field.field_type);
         fields_key.push(field.key);
     }
 
-    (dyn_row_name, fields_key, fields_ty, optics_trait)
+    (row_name, fields_key, fields_ty, optics_trait)
 }
 
 fn map_trait(suffix: &TypeSuffix, mutability: &Mutability) -> &'static str {
