@@ -24,9 +24,9 @@ fn main() {
     {
         for rs_path in section.rs_paths.unwrap() {
             let contents = String::from_utf8(fs::read(rs_path).unwrap()).unwrap();
-            let syntax = syn::parse_file(&contents)
-                .expect(".rs files should contain valid Rust source code.");
-            row_collector.visit_file(&syntax);
+            if let Some(syntax) = syn::parse_file(&contents) {
+                row_collector.visit_file(&syntax);
+            }
         }
     }
 
